@@ -32,7 +32,13 @@ It is the Zarr counterpart of HDF5Array::H5SparseMatrixSeed."><!-- mathjax --><s
 <li>
   <a href="../reference/index.html">Reference</a>
 </li>
-      </ul><ul class="nav navbar-nav navbar-right"></ul></div><!--/.nav-collapse -->
+      </ul><ul class="nav navbar-nav navbar-right"><li>
+  <a href="https://github.com/GabrielHoffman/ZarrSparseMatrix/" class="external-link">
+    <span class="fab fa-github fa-lg"></span>
+
+  </a>
+</li>
+      </ul></div><!--/.nav-collapse -->
   </div><!--/.container -->
 </div><!--/.navbar -->
 
@@ -42,7 +48,7 @@ It is the Zarr counterpart of HDF5Array::H5SparseMatrixSeed."><!-- mathjax --><s
   <div class="col-md-9 contents">
     <div class="page-header">
     <h1>ZarrSparseMatrixSeed objects</h1>
-
+    <small class="dont-index">Source: <a href="https://github.com/GabrielHoffman/ZarrSparseMatrix/blob/HEAD/R/ZarrSparseMatrix.R" class="external-link"><code>R/ZarrSparseMatrix.R</code></a></small>
     <div class="hidden name"><code>ZarrSparseMatrixSeed.Rd</code></div>
     </div>
 
@@ -170,7 +176,7 @@ higher-level <a href="ZarrSparseMatrix.html">ZarrSparseMatrix</a> object instead
 <span class="r-in"><span><span class="va">seed</span> <span class="op">&lt;-</span> <span class="fu">ZarrSparseMatrixSeed</span><span class="op">(</span><span class="va">store</span>, <span class="st">"X"</span><span class="op">)</span></span></span>
 <span class="r-in"><span><span class="va">seed</span></span></span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> &lt;200 x 100&gt; sparse CSR_ZarrSparseMatrixSeed object of type "integer":</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> # dirname: /private/var/folders/7_/sqg9z3y97xd51lj4lml82n2w0000gn/T/RtmpLPGpfF/temp_libpath120ae7754765b/ZarrSparseMatrix/extdata</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> # dirname: /private/var/folders/7_/sqg9z3y97xd51lj4lml82n2w0000gn/T/RtmpzOF1Nu/temp_libpath1450327c1939/ZarrSparseMatrix/extdata</span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> # basename: example.zarr</span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> # group: X</span>
 <span class="r-in"><span><span class="fu"><a href="https://rdrr.io/r/base/dim.html" class="external-link">dim</a></span><span class="op">(</span><span class="va">seed</span><span class="op">)</span></span></span>
@@ -186,7 +192,7 @@ higher-level <a href="ZarrSparseMatrix.html">ZarrSparseMatrix</a> object instead
 <span class="r-in"><span><span class="co">## A CSR seed transposes to a CSC seed without reading any data</span></span></span>
 <span class="r-in"><span><span class="fu"><a href="https://rdrr.io/r/base/t.html" class="external-link">t</a></span><span class="op">(</span><span class="va">seed</span><span class="op">)</span></span></span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> &lt;100 x 200&gt; sparse CSC_ZarrSparseMatrixSeed object of type "integer":</span>
-<span class="r-out co"><span class="r-pr">#&gt;</span> # dirname: /private/var/folders/7_/sqg9z3y97xd51lj4lml82n2w0000gn/T/RtmpLPGpfF/temp_libpath120ae7754765b/ZarrSparseMatrix/extdata</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> # dirname: /private/var/folders/7_/sqg9z3y97xd51lj4lml82n2w0000gn/T/RtmpzOF1Nu/temp_libpath1450327c1939/ZarrSparseMatrix/extdata</span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> # basename: example.zarr</span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> # group: X</span>
 <span class="r-in"><span></span></span>

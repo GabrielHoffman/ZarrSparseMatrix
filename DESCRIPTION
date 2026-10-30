@@ -2,13 +2,14 @@ Package: ZarrSparseMatrix
 Type: Package
 Title: DelayedArray Backend for Sparse Matrices Stored in Zarr
 Version: 0.99.0
-Authors@R: person("Gabriel", "Hoffman", email = "gabriel.hoffman@mssm.edu",
-    role = c("aut", "cre"))
+Authors@R: person("Gabriel", "Hoffman", role=c("aut", "cre"), email="gabriel.hoffman@mssm.edu", comment=c(ORCID="0000-0002-0957-0224"))
 Description: Provides the ZarrSparseMatrix class, a DelayedMatrix backend for
     sparse matrices stored in CSR or CSC layout in a Zarr store as 'data',
     'indices' and 'indptr' arrays (e.g. the X group of an AnnData .zarr
     store). It is the Zarr counterpart of HDF5Array::H5SparseMatrix and reads
     data with Rarr.
+URL: https://github.com/GabrielHoffman/ZarrSparseMatrix
+BugReports: https://github.com/GabrielHoffman/ZarrSparseMatrix/issues
 License: Artistic-2.0
 Encoding: UTF-8
 Depends:

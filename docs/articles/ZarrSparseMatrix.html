@@ -45,7 +45,14 @@
   <a href="../reference/index.html">Reference</a>
 </li>
       </ul>
-<ul class="nav navbar-nav navbar-right"></ul>
+<ul class="nav navbar-nav navbar-right">
+<li>
+  <a href="https://github.com/GabrielHoffman/ZarrSparseMatrix/" class="external-link">
+    <span class="fab fa-github fa-lg"></span>
+
+  </a>
+</li>
+      </ul>
 </div>
 <!--/.nav-collapse -->
   </div>
@@ -65,7 +72,7 @@ Hoffman</h4>
             
             <h4 data-toc-skip class="date">2026-10-30</h4>
       
-
+      <small class="dont-index">Source: <a href="https://github.com/GabrielHoffman/ZarrSparseMatrix/blob/HEAD/vignettes/ZarrSparseMatrix.Rmd" class="external-link"><code>vignettes/ZarrSparseMatrix.Rmd</code></a></small>
       <div class="hidden name"><code>ZarrSparseMatrix.Rmd</code></div>
 
     </div>
@@ -120,7 +127,7 @@ cells and 100 genes, stored like AnnData’s <code>X</code> (CSR layout,
 cells as rows).</p>
 <div class="sourceCode" id="cb2"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="fu"><a href="https://rdrr.io/r/base/message.html" class="external-link">suppressMessages</a></span><span class="op">(</span><span class="op">{</span></span>
-<span><span class="kw"><a href="https://rdrr.io/r/base/library.html" class="external-link">library</a></span><span class="op">(</span><span class="va">ZarrSparseMatrix</span><span class="op">)</span></span>
+<span><span class="kw"><a href="https://rdrr.io/r/base/library.html" class="external-link">library</a></span><span class="op">(</span><span class="va"><a href="https://github.com/GabrielHoffman/ZarrSparseMatrix" class="external-link">ZarrSparseMatrix</a></span><span class="op">)</span></span>
 <span><span class="op">}</span><span class="op">)</span></span>
 <span></span>
 <span><span class="va">store</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/system.file.html" class="external-link">system.file</a></span><span class="op">(</span><span class="st">"extdata"</span>, <span class="st">"example.zarr"</span>, package<span class="op">=</span><span class="st">"ZarrSparseMatrix"</span><span class="op">)</span></span>
@@ -155,7 +162,7 @@ and <code>encoding-type</code> attributes:</p>
 <span><span class="co">#&gt; [1] TRUE</span></span>
 <span><span class="fu"><a href="https://rdrr.io/pkg/DelayedArray/man/showtree.html" class="external-link">seed</a></span><span class="op">(</span><span class="va">X</span><span class="op">)</span></span>
 <span><span class="co">#&gt; &lt;200 x 100&gt; sparse CSR_ZarrSparseMatrixSeed object of type "integer":</span></span>
-<span><span class="co">#&gt; # dirname: /private/var/folders/7_/sqg9z3y97xd51lj4lml82n2w0000gn/T/RtmpLPGpfF/temp_libpath120ae7754765b/ZarrSparseMatrix/extdata</span></span>
+<span><span class="co">#&gt; # dirname: /private/var/folders/7_/sqg9z3y97xd51lj4lml82n2w0000gn/T/RtmpzOF1Nu/temp_libpath1450327c1939/ZarrSparseMatrix/extdata</span></span>
 <span><span class="co">#&gt; # basename: example.zarr</span></span>
 <span><span class="co">#&gt; # group: X</span></span></code></pre></div>
 <p><code>nzcount()</code> gives the number of stored values, read from
@@ -223,7 +230,7 @@ with genes as rows:</p>
 <span><span class="co">#&gt; [100,]      1      0      0      0   .      2      0      0      0</span></span>
 <span><span class="fu"><a href="https://rdrr.io/pkg/DelayedArray/man/showtree.html" class="external-link">seed</a></span><span class="op">(</span><span class="va">tX</span><span class="op">)</span></span>
 <span><span class="co">#&gt; &lt;100 x 200&gt; sparse CSC_ZarrSparseMatrixSeed object of type "integer":</span></span>
-<span><span class="co">#&gt; # dirname: /private/var/folders/7_/sqg9z3y97xd51lj4lml82n2w0000gn/T/RtmpLPGpfF/temp_libpath120ae7754765b/ZarrSparseMatrix/extdata</span></span>
+<span><span class="co">#&gt; # dirname: /private/var/folders/7_/sqg9z3y97xd51lj4lml82n2w0000gn/T/RtmpzOF1Nu/temp_libpath1450327c1939/ZarrSparseMatrix/extdata</span></span>
 <span><span class="co">#&gt; # basename: example.zarr</span></span>
 <span><span class="co">#&gt; # group: X</span></span></code></pre></div>
 </div>
@@ -368,7 +375,7 @@ above as CSC with reversed dimensions gives its transpose directly:</p>
 <code class="sourceCode R"><span><span class="va">Xcsc</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/ZarrSparseMatrix.html">ZarrSparseMatrix</a></span><span class="op">(</span><span class="va">store</span>, <span class="st">"X"</span>, dim<span class="op">=</span><span class="fu"><a href="https://rdrr.io/r/base/rev.html" class="external-link">rev</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/dim.html" class="external-link">dim</a></span><span class="op">(</span><span class="va">X</span><span class="op">)</span><span class="op">)</span>, sparse.layout<span class="op">=</span><span class="st">"CSC"</span><span class="op">)</span></span>
 <span><span class="fu"><a href="https://rdrr.io/pkg/DelayedArray/man/showtree.html" class="external-link">seed</a></span><span class="op">(</span><span class="va">Xcsc</span><span class="op">)</span></span>
 <span><span class="co">#&gt; &lt;100 x 200&gt; sparse CSC_ZarrSparseMatrixSeed object of type "integer":</span></span>
-<span><span class="co">#&gt; # dirname: /private/var/folders/7_/sqg9z3y97xd51lj4lml82n2w0000gn/T/RtmpLPGpfF/temp_libpath120ae7754765b/ZarrSparseMatrix/extdata</span></span>
+<span><span class="co">#&gt; # dirname: /private/var/folders/7_/sqg9z3y97xd51lj4lml82n2w0000gn/T/RtmpzOF1Nu/temp_libpath1450327c1939/ZarrSparseMatrix/extdata</span></span>
 <span><span class="co">#&gt; # basename: example.zarr</span></span>
 <span><span class="co">#&gt; # group: X</span></span>
 <span><span class="fu"><a href="https://rdrr.io/r/base/all.equal.html" class="external-link">all.equal</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/matrix.html" class="external-link">as.matrix</a></span><span class="op">(</span><span class="va">Xcsc</span><span class="op">)</span>, <span class="fu"><a href="https://rdrr.io/r/base/t.html" class="external-link">t</a></span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/matrix.html" class="external-link">as.matrix</a></span><span class="op">(</span><span class="va">X</span><span class="op">)</span><span class="op">)</span>, check.attributes<span class="op">=</span><span class="cn">FALSE</span><span class="op">)</span></span>
