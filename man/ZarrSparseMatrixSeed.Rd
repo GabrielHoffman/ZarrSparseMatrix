@@ -97,8 +97,7 @@ directly. Most end users will typically create and manipulate a
 higher-level \link{ZarrSparseMatrix} object instead.
 }
 \examples{
-store <- system.file("extdata", "example.zarr",
-                     package="ZarrSparseMatrix")
+store <- exampleZarr()
 seed <- ZarrSparseMatrixSeed(store, "X")
 seed
 dim(seed)

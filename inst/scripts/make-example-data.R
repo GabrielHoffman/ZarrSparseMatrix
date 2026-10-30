@@ -1,6 +1,10 @@
-### Create inst/extdata/example.zarr: a small simulated counts matrix
+### Create inst/extdata/example.zarr.zip: a small simulated counts matrix
 ### (200 cells x 100 genes) stored like the X group of an AnnData .zarr
 ### store, i.e. in CSR layout with cells as rows.
+###
+### The store is zipped because Zarr v2 metadata files (.zarray, .zattrs,
+### .zgroup) are hidden files, which R CMD check flags. exampleZarr()
+### unzips it to tempdir() at runtime.
 ###
 ### Run from the package root:
 ###   Rscript inst/scripts/make-example-data.R
@@ -30,8 +34,8 @@ counts <- matrix(rnbinom(n_cells * n_genes, mu=rep(mu, each=n_cells),
                  n_cells, n_genes)
 counts <- as(counts, "CsparseMatrix")   # cells x genes
 
-store <- file.path("inst", "extdata", "example.zarr")
-unlink(store, recursive=TRUE)
+extdata <- normalizePath(file.path("inst", "extdata"))
+store <- file.path(tempfile(), "example.zarr")
 g <- file.path(store, "X")
 dir.create(g, recursive=TRUE)
 writeLines('{"zarr_format": 2}', file.path(store, ".zgroup"))
@@ -45,3 +49,11 @@ S <- as(t(counts), "CsparseMatrix")
 write_1d_zarr(as.integer(S@x), file.path(g, "data"), 1000L)
 write_1d_zarr(S@i, file.path(g, "indices"), 1000L)
 write_1d_zarr(S@p, file.path(g, "indptr"), 1000L)
+
+### Zip with paths relative to the store's parent, so the archive contains
+### example.zarr/... ('-X' leaves out macOS extended attributes).
+zipfile <- file.path(extdata, "example.zarr.zip")
+unlink(zipfile)
+old <- setwd(dirname(store))
+zip(zipfile, "example.zarr", flags="-rqX")
+setwd(old)

@@ -48,8 +48,7 @@ the corresponding elements of \code{data} and \code{indices}.
 \examples{
 ## Simulated counts for 200 cells x 100 genes, stored like the X group
 ## of an AnnData .zarr store (CSR layout)
-store <- system.file("extdata", "example.zarr",
-                     package="ZarrSparseMatrix")
+store <- exampleZarr()
 X <- ZarrSparseMatrix(store, "X")
 X
 

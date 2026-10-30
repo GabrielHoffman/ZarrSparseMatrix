@@ -2,6 +2,7 @@
 
 export(ZarrSparseMatrix)
 export(ZarrSparseMatrixSeed)
+export(exampleZarr)
 exportClasses(CSC_ZarrSparseMatrixSeed)
 exportClasses(CSR_ZarrSparseMatrixSeed)
 exportClasses(ZarrSparseMatrix)
@@ -53,3 +54,4 @@ importFrom(methods,
   new,
   show
 )
+importFrom(utils,unzip)

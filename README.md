@@ -32,7 +32,7 @@ BiocManager::install("ZarrSparseMatrix")
 library(ZarrSparseMatrix)
 
 # Example store: 200 cells x 100 genes, in AnnData's CSR layout
-store <- system.file("extdata", "example.zarr", package = "ZarrSparseMatrix")
+store <- exampleZarr()
 X <- ZarrSparseMatrix(store, "X")
 X
 #> <200 x 100> sparse ZarrSparseMatrix object of type "integer":

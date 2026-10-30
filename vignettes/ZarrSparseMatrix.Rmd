@@ -52,13 +52,15 @@ BiocManager::install("ZarrSparseMatrix")
 
 The package includes a small example store: simulated counts for 200 cells
 and 100 genes, stored like AnnData's `X` (CSR layout, cells as rows).
+`exampleZarr()` unzips it to a temporary directory and returns its path.
 
 ```{r load}
 suppressMessages({
 library(ZarrSparseMatrix)
 })
 
-store <- system.file("extdata", "example.zarr", package="ZarrSparseMatrix")
+store <- exampleZarr()
+store
 list.files(store, recursive=TRUE, all.files=TRUE)[1:6]
 ```
 

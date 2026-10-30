@@ -22,7 +22,8 @@ Imports:
     S4Arrays,
     SparseArray,
     Rarr,
-    jsonlite
+    jsonlite,
+    utils
 Suggests:
     Matrix,
     testthat (>= 3.0.0),
@@ -35,4 +36,5 @@ Config/testthat/edition: 3
 Roxygen: list(markdown = FALSE)
 Collate:
     ZarrSparseMatrix.R
+    exampleZarr.R
 Config/roxygen2/version: 8.1.1
