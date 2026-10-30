@@ -40,7 +40,12 @@ reads only the corresponding parts of `data` and `indices`.
 ```{r install, eval=FALSE}
 if (!requireNamespace("BiocManager", quietly=TRUE))
     install.packages("BiocManager")
+
+# Install from Bioconductor
 BiocManager::install("ZarrSparseMatrix")
+
+# Install from GitHub
+# remotes::install_github("GabrielHoffman/ZarrSparseMatrix")
 ```
 
 # Creating a ZarrSparseMatrix

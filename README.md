@@ -19,8 +19,11 @@ if (!requireNamespace("BiocManager", quietly = TRUE))
     install.packages("BiocManager")
 BiocManager::install(c("Rarr", "DelayedArray", "SparseArray"))
 
-# from a local copy of this repository
-install.packages("path/to/ZarrSparseMatrix", repos = NULL, type = "source")
+# Install from Bioconductor
+BiocManager::install("ZarrSparseMatrix")
+
+# Install from GitHub
+# remotes::install_github("GabrielHoffman/ZarrSparseMatrix")
 ```
 
 ## Usage
