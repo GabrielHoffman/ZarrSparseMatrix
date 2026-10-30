@@ -1,0 +1,37 @@
+Package: ZarrSparseMatrix
+Type: Package
+Title: DelayedArray Backend for Sparse Matrices Stored in Zarr
+Version: 0.99.0
+Authors@R: person("Gabriel", "Hoffman", email = "gabriel.hoffman@mssm.edu",
+    role = c("aut", "cre"))
+Description: Provides the ZarrSparseMatrix class, a DelayedMatrix backend for
+    sparse matrices stored in CSR or CSC layout in a Zarr store as 'data',
+    'indices' and 'indptr' arrays (e.g. the X group of an AnnData .zarr
+    store). It is the Zarr counterpart of HDF5Array::H5SparseMatrix and reads
+    data with Rarr.
+License: Artistic-2.0
+Encoding: UTF-8
+Depends:
+    R (>= 4.4.0),
+    methods,
+    DelayedArray (>= 0.32.0)
+Imports:
+    BiocGenerics,
+    S4Vectors,
+    S4Arrays,
+    SparseArray,
+    Rarr,
+    jsonlite
+Suggests:
+    Matrix,
+    testthat (>= 3.0.0),
+    knitr,
+    rmarkdown,
+    BiocStyle,
+    SingleCellExperiment
+VignetteBuilder: knitr
+Config/testthat/edition: 3
+Roxygen: list(markdown = FALSE)
+Collate:
+    ZarrSparseMatrix.R
+Config/roxygen2/version: 8.1.1

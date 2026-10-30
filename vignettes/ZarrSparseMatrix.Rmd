@@ -1,0 +1,234 @@
+---
+title: "Sparse matrices stored in Zarr with ZarrSparseMatrix"
+author: "Gabriel Hoffman"
+date: "`r Sys.Date()`"
+package: ZarrSparseMatrix
+output:
+  BiocStyle::html_document:
+    toc: true
+    toc_float: true
+vignette: >
+  %\VignetteIndexEntry{Sparse matrices stored in Zarr with ZarrSparseMatrix}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(collapse=TRUE, comment="#>")
+```
+
+# Introduction
+
+Large sparse matrices, such as single-cell counts, are often stored in
+[Zarr](https://zarr.dev) stores. AnnData's `write_zarr()` saves its `X`
+matrix in a Zarr group as three 1D arrays:
+
+- `data`: the nonzero values
+- `indices`: the 0-based column (CSR) or row (CSC) index of each value
+- `indptr`: where each row (CSR) or column (CSC) starts in `data` and
+  `indices`
+
+`ZarrSparseMatrix` represents such a matrix in R without loading it into
+memory. It is a `DelayedMatrix`, so it works with any code written for
+`r Biocpkg("DelayedArray")` objects, and it is the Zarr counterpart of
+`HDF5Array::H5SparseMatrix`. Data is read with `r Biocpkg("Rarr")` only when
+it is needed. Selecting rows of a CSR matrix, or columns of a CSC matrix,
+reads only the corresponding parts of `data` and `indices`.
+
+# Installation
+
+```{r install, eval=FALSE}
+if (!requireNamespace("BiocManager", quietly=TRUE))
+    install.packages("BiocManager")
+BiocManager::install("ZarrSparseMatrix")
+```
+
+# Creating a ZarrSparseMatrix
+
+The package includes a small example store: simulated counts for 200 cells
+and 100 genes, stored like AnnData's `X` (CSR layout, cells as rows).
+
+```{r load}
+suppressMessages({
+library(ZarrSparseMatrix)
+})
+
+store <- system.file("extdata", "example.zarr", package="ZarrSparseMatrix")
+list.files(store, recursive=TRUE, all.files=TRUE)[1:6]
+```
+
+Pass the path to the store and the name of the group:
+
+```{r construct}
+X <- ZarrSparseMatrix(store, "X")
+X
+```
+
+The dimensions and layout come from the group's `shape` and `encoding-type`
+attributes:
+
+```{r attrs}
+dim(X)
+type(X)
+is_sparse(X)
+seed(X)
+```
+
+`nzcount()` gives the number of stored values, read from the metadata of the
+`data` array:
+
+```{r nzcount}
+nzcount(seed(X))
+nzcount(seed(X)) / length(X)
+```
+
+# Subsetting
+
+Subsetting is delayed. Data is read when the result is printed or realized:
+
+```{r subset}
+X[1:5, 1:8]
+as.matrix(X[c(10, 3, 3), c(100, 1)])
+```
+
+Bioconductor usually stores genes as rows and cells as columns, which is the
+transpose of AnnData. `t(X)` gives a delayed transpose. Transposing the seed
+instead turns the CSR seed into a CSC seed without reading any data, and
+gives a `ZarrSparseMatrix` with genes as rows:
+
+```{r transpose}
+t(X)
+
+tX <- ZarrSparseMatrix(t(seed(X)))
+tX
+seed(tX)
+```
+
+# Summaries and block processing
+
+Summaries such as `rowSums()` and `colSums()` are computed block by block, so
+only one block is in memory at a time:
+
+```{r sums}
+libsize <- rowSums(X)
+head(libsize)
+
+gene_mean <- colMeans(X)
+head(gene_mean)
+```
+
+The block size is set with `setAutoBlockSize()`. A small value forces many
+blocks, which shows that the result doesn't depend on it:
+
+```{r blocks}
+old <- getAutoBlockSize()
+setAutoBlockSize(2000)
+all.equal(colSums(X), colSums(as.matrix(X)))
+setAutoBlockSize(old)
+```
+
+Operations such as normalization and `log1p()` are delayed too. Nothing is
+computed until the result is used:
+
+```{r delayed-ops}
+logcounts <- log1p(X / libsize * 1e4)
+logcounts
+showtree(logcounts)
+```
+
+`blockApply()` runs your own function on each block. Here, the number of
+nonzero values per block of rows:
+
+```{r blockApply}
+grid <- rowAutoGrid(X, nrow=50)
+unlist(blockApply(X, function(block) nzcount(block), grid=grid,
+                  as.sparse=TRUE))
+```
+
+# Converting to in-memory matrices
+
+`as()` loads the matrix into memory as any sparse or dense class:
+
+```{r convert}
+m <- as(X, "dgCMatrix")
+class(m)
+
+svt <- as(X, "SVT_SparseArray")
+class(svt)
+
+dense <- as.matrix(X[1:3, 1:3])
+dense
+```
+
+# Row and column names
+
+AnnData stores cell and gene names separately (in `obs` and `var`), so the
+names aren't in the `X` group. Pass them with the `dimnames` argument:
+
+```{r dimnames}
+cells <- sprintf("cell_%03d", seq_len(nrow(X)))
+genes <- sprintf("gene_%03d", seq_len(ncol(X)))
+X <- ZarrSparseMatrix(store, "X", dimnames=list(cells, genes))
+X[1:3, 1:4]
+```
+
+# Using a ZarrSparseMatrix in a SingleCellExperiment
+
+A `ZarrSparseMatrix` can be used as an assay, and stays on disk:
+
+```{r sce, eval=requireNamespace("SingleCellExperiment", quietly=TRUE)}
+suppressMessages({
+library(SingleCellExperiment)
+})
+
+counts <- ZarrSparseMatrix(t(seed(X)))
+sce <- SingleCellExperiment(assays=list(counts=counts))
+sce
+class(counts(sce))
+```
+
+# CSC matrices and overriding the metadata
+
+A CSC matrix (`encoding-type` `csc_matrix`) is read the same way. Selecting
+columns of a CSC matrix is cheap, and selecting rows of a CSR matrix is cheap.
+
+If the group has no `shape` or `encoding-type` attribute, give them with
+`dim` and `sparse.layout`. For example, reading the CSR `X` above as CSC
+with reversed dimensions gives its transpose directly:
+
+```{r override}
+Xcsc <- ZarrSparseMatrix(store, "X", dim=rev(dim(X)), sparse.layout="CSC")
+seed(Xcsc)
+all.equal(as.matrix(Xcsc), t(as.matrix(X)), check.attributes=FALSE)
+```
+
+To read an alternative array that shares `indices` and `indptr` with `data`,
+pass its name as `subdata`.
+
+# Writing a Zarr store from Python
+
+Use Zarr format 2, because `r Biocpkg("Rarr")` reads Zarr v2 arrays. Recent
+versions of anndata warn that the default will change to v3. Setting the
+format explicitly keeps your stores readable in R:
+
+```python
+import anndata as ad
+import scanpy as sc
+
+ad.settings.zarr_write_format = 2
+
+adata = sc.datasets.pbmc3k()
+adata.write_zarr("pbmc3k.zarr")
+```
+
+Then in R:
+
+```{r pbmc, eval=FALSE}
+X <- ZarrSparseMatrix("pbmc3k.zarr", "X")
+```
+
+# Session information
+
+```{r session}
+sessionInfo()
+```
