@@ -87,3 +87,25 @@ test_that("row and column selections match the in-memory matrix", {
         }
     }
 })
+
+test_that("t() transposes the seed instead of delaying the transpose", {
+    dn <- list(paste0("r", seq_len(nrow(D))), paste0("c", seq_len(ncol(D))))
+    for (layout in c("csr", "csc")) {
+        store <- file.path(tempfile(), paste0(layout, ".zarr"))
+        write_sparse_zarr(store, M, layout)
+        X <- ZarrSparseMatrix(store, "X", dimnames=dn)
+        tX <- t(X)
+        expect_s4_class(tX, "ZarrSparseMatrix")
+        expect_s4_class(seed(tX), if (layout == "csr") "CSC_ZarrSparseMatrixSeed"
+                                  else "CSR_ZarrSparseMatrixSeed")
+        expect_identical(dimnames(tX), rev(dn))
+        expect_equal(as.matrix(tX), t(D), ignore_attr=TRUE)
+        expect_equal(as.matrix(tX[c(5, 2, 2), c(30, 1)]),
+                     t(D)[c(5, 2, 2), c(30, 1)], ignore_attr=TRUE)
+        expect_identical(class(seed(t(tX))), class(seed(X)))
+        ## After subsetting, t() is delayed as for any DelayedMatrix.
+        Y <- t(X[1:4, ])
+        expect_false(is(Y, "ZarrSparseMatrix"))
+        expect_equal(as.matrix(Y), t(D[1:4, ]), ignore_attr=TRUE)
+    }
+})

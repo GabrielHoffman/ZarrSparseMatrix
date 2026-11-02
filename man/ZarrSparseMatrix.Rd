@@ -5,12 +5,15 @@
 \alias{ZarrSparseMatrix-class}
 \alias{DelayedArray,ZarrSparseMatrixSeed-method}
 \alias{seed,ZarrSparseMatrix-method}
+\alias{t,ZarrSparseMatrix-method}
 \alias{ZarrSparseMatrix}
 \title{Sparse matrices stored in a Zarr store}
 \usage{
 \S4method{DelayedArray}{ZarrSparseMatrixSeed}(seed)
 
 \S4method{seed}{ZarrSparseMatrix}(x)
+
+\S4method{t}{ZarrSparseMatrix}(x)
 
 ZarrSparseMatrix(filepath, group, ...)
 }
@@ -44,6 +47,14 @@ All the operations available for \link[DelayedArray]{DelayedMatrix}
 objects work on ZarrSparseMatrix objects. Data is only read from disk
 when needed, and subsetting by column (CSC) or by row (CSR) only reads
 the corresponding elements of \code{data} and \code{indices}.
+
+\code{t()} on a ZarrSparseMatrix transposes its seed, so the result is
+another ZarrSparseMatrix: a CSR seed becomes a CSC seed and vice versa,
+and no data is read. Reading from the result is as fast as reading from
+the original, whereas a delayed transpose (what \code{t()} does on other
+DelayedMatrix objects) transposes every block after reading it. Once a
+ZarrSparseMatrix is subset or modified, it becomes a DelayedMatrix and
+\code{t()} is delayed as usual.
 }
 \examples{
 ## Simulated counts for 200 cells x 100 genes, stored like the X group
@@ -55,9 +66,11 @@ X
 X[1:5, 1:10]
 colSums(X)
 
-## Genes as rows, cells as columns: transposing the seed gives a
-## ZarrSparseMatrix backed by a CSC seed, without reading any data
-ZarrSparseMatrix(t(seed(X)))
+## Genes as rows, cells as columns: t() gives a ZarrSparseMatrix
+## backed by a CSC seed, without reading any data
+tX <- t(X)
+tX
+seed(tX)
 
 ## Load into memory
 as(X, "dgCMatrix")

@@ -99,17 +99,21 @@ as.matrix(X[c(10, 3, 3), c(100, 1)])
 ```
 
 Bioconductor usually stores genes as rows and cells as columns, which is the
-transpose of AnnData. `t(X)` gives a delayed transpose. Transposing the seed
-instead turns the CSR seed into a CSC seed without reading any data, and
-gives a `ZarrSparseMatrix` with genes as rows:
+transpose of AnnData. `t(X)` turns the CSR seed into a CSC seed without
+reading any data, and gives a `ZarrSparseMatrix` with genes as rows. Unlike
+a delayed transpose, the result is read directly in its new orientation, so
+it is as fast to read as `X`:
 
 ```{r transpose}
-t(X)
-
-tX <- ZarrSparseMatrix(t(seed(X)))
+tX <- t(X)
 tX
 seed(tX)
 ```
+
+Once a `ZarrSparseMatrix` is subset or modified it becomes an ordinary
+`DelayedMatrix`, and `t()` is delayed. To get the fast transpose, transpose
+first and subset afterwards, e.g. `t(X)[genes, cells]` rather than
+`t(X[cells, genes])`.
 
 # Summaries and block processing
 
@@ -188,7 +192,7 @@ suppressMessages({
 library(SingleCellExperiment)
 })
 
-counts <- ZarrSparseMatrix(t(seed(X)))
+counts <- t(X)
 sce <- SingleCellExperiment(assays=list(counts=counts))
 sce
 class(counts(sce))

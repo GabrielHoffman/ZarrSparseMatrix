@@ -41,8 +41,8 @@ X[1:5, 1:10]          # delayed subsetting
 colSums(X)            # computed block by block
 as(X, "dgCMatrix")    # load into memory
 
-# Genes as rows: transposing the seed turns CSR into CSC without reading data
-counts <- ZarrSparseMatrix(t(seed(X)))
+# Genes as rows: t() turns CSR into CSC without reading data
+counts <- t(X)
 
 library(SingleCellExperiment)
 sce <- SingleCellExperiment(assays = list(counts = counts))

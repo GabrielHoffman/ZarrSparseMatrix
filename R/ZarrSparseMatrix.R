@@ -351,43 +351,50 @@
     if (!is.null(idx) && length(idx) == 0L)
         return(vector(reader$type, 0L))
 
+    perm <- NULL
     if (is.null(idx)) {
         idx <- seq_len(n)
-        perm <- NULL
+        strict <- TRUE
     } else {
         idx <- as.numeric(idx)
-        if (anyNA(idx) || min(idx) < 1 || max(idx) > n)
+        ## One pass in the common case of strictly increasing positions.
+        ## is.unsorted() is NA if 'idx' has NAs. 'strict' (no duplicates)
+        ## tells whether a chunk is fully selected when the number of
+        ## positions in it equals its length.
+        unsorted <- is.unsorted(idx, strictly=TRUE)
+        if (is.na(unsorted))
             stop("subscript out of bounds")
-        perm <- NULL
-        if (is.unsorted(idx)) {
+        strict <- !unsorted
+        if (unsorted && is.unsorted(idx)) {
             perm <- order(idx)
             idx <- idx[perm]
         }
+        if (idx[[1L]] < 1 || idx[[length(idx)]] > n)
+            stop("subscript out of bounds")
     }
 
-    ## With no duplicates, a chunk is fully selected when the number of
-    ## selected elements equals its length.
-    strict <- isStrictlySorted(idx)
+    ## For each chunk overlapping [idx[1], idx[length(idx)]], the positions
+    ## in 'idx' of its first and last selected elements: lo[k]..hi[k].
+    ## 'idx' is known to be sorted and free of NAs, so findInterval() can
+    ## skip checking it.
     first <- (idx[[1L]] - 1) %/% chunk
     last <- (idx[[length(idx)]] - 1) %/% chunk
-    ## bounds[k] is the position in 'idx' of the first element in chunk
-    ## (first + k - 1); bounds[k + 1] - 1 is the position of its last.
-    bounds <- findInterval(seq(first, last + 1) * chunk, idx) + 1L
-    pieces <- vector("list", last - first + 1)
-    for (k in seq_along(pieces)) {
-        lo <- bounds[[k]]
-        hi <- bounds[[k + 1L]] - 1L
-        if (hi < lo)
-            next
-        cid <- first + k - 1
-        chunk_data <- as.vector(reader$read(cid))
-        ## Whole chunk selected: no need to subset it.
-        if (strict && hi - lo + 1 == length(chunk_data)) {
-            pieces[[k]] <- chunk_data
-        } else {
-            pieces[[k]] <- chunk_data[idx[lo:hi] - cid * chunk]
-        }
-    }
+    bounds <- findInterval(seq(first, last + 1) * chunk, idx,
+                           checkSorted=FALSE, checkNA=FALSE) + 1
+    lo <- bounds[-length(bounds)]
+    hi <- bounds[-1L] - 1
+    cids <- seq(first, last)
+    needed <- which(hi >= lo)
+
+    ## Decode each needed chunk once (Rarr returns 1D arrays; unlist() drops
+    ## their "dim" attribute) and keep the selected elements.
+    pieces <- lapply(needed, function(k) {
+        cid <- cids[[k]]
+        chunk_data <- reader$read(cid)
+        if (strict && hi[[k]] - lo[[k]] + 1 == length(chunk_data))
+            return(chunk_data)  # whole chunk selected
+        chunk_data[idx[lo[[k]]:hi[[k]]] - cid * chunk]
+    })
     ans <- unlist(pieces, use.names=FALSE)
 
     if (!is.null(perm))
@@ -779,8 +786,8 @@ if (!(is.character(filepath) && length(filepath) == 1L && !is.na(filepath)))
 
 ### Dense extraction from a CSC seed, or from a CSR seed via its CSC
 ### transpose 't(x)' and reversed index.
-.extract_array_from_CSC_ZarrSparseMatrixSeed <- function(x, index,
-                                                          transpose=FALSE)
+.extract_array_from_CSC_ZarrSparseMatrixSeed <- function(
+    x, index, transpose=FALSE)
 {
   idx <- .normalize_CSC_index(index)
   ans <- .load_CSC_as_dense(x, i=idx$i, j=idx$j, transpose=transpose)
@@ -873,6 +880,14 @@ setMethod("chunkdim", "CSR_ZarrSparseMatrixSeed",
 #' when needed, and subsetting by column (CSC) or by row (CSR) only reads
 #' the corresponding elements of \code{data} and \code{indices}.
 #'
+#' \code{t()} on a ZarrSparseMatrix transposes its seed, so the result is
+#' another ZarrSparseMatrix: a CSR seed becomes a CSC seed and vice versa,
+#' and no data is read. Reading from the result is as fast as reading from
+#' the original, whereas a delayed transpose (what \code{t()} does on other
+#' DelayedMatrix objects) transposes every block after reading it. Once a
+#' ZarrSparseMatrix is subset or modified, it becomes a DelayedMatrix and
+#' \code{t()} is delayed as usual.
+#'
 #' @param filepath Path to the \code{.zarr} store, or a
 #'   \link{ZarrSparseMatrixSeed} object.
 #' @param group Name of the group in the store that contains the sparse
@@ -896,9 +911,11 @@ setMethod("chunkdim", "CSR_ZarrSparseMatrixSeed",
 #' X[1:5, 1:10]
 #' colSums(X)
 #'
-#' ## Genes as rows, cells as columns: transposing the seed gives a
-#' ## ZarrSparseMatrix backed by a CSC seed, without reading any data
-#' ZarrSparseMatrix(t(seed(X)))
+#' ## Genes as rows, cells as columns: t() gives a ZarrSparseMatrix
+#' ## backed by a CSC seed, without reading any data
+#' tX <- t(X)
+#' tX
+#' seed(tX)
 #'
 #' ## Load into memory
 #' as(X, "dgCMatrix")
@@ -923,6 +940,16 @@ setMethod("DelayedArray", "ZarrSparseMatrixSeed",
 #' @rdname ZarrSparseMatrix
 setMethod("seed", "ZarrSparseMatrix",
   function(x) x@seed
+)
+
+### Transpose the seed rather than delaying the transpose. This reads no
+### data (a CSC seed becomes a CSR seed and vice versa), and the result is
+### read directly in the transposed layout. A delayed transpose would make
+### DelayedArray call aperm() on every block it reads, which copies it.
+#' @exportMethod t
+#' @rdname ZarrSparseMatrix
+setMethod("t", "ZarrSparseMatrix",
+  function(x) DelayedArray(t(seed(x)))
 )
 
 #' @importFrom methods is

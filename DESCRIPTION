@@ -21,7 +21,7 @@ Imports:
     S4Vectors,
     S4Arrays,
     SparseArray,
-    Rarr,
+    Rarr (>= 2.0.0),
     jsonlite,
     utils
 Suggests:
