@@ -66,10 +66,11 @@
 ### Read elements 'idx' (1-based) of a 1D Zarr array. Reads the whole array
 ### if 'idx' is NULL.
 ###
-### For a local Zarr v2 array, chunks are read one at a time with Rarr's
-### internal read_chunk() (see .read_zarr_1d_by_chunk() below). For anything
-### else, or if that fails (e.g. Rarr's internals changed), this falls back
-### to Rarr::read_zarr_array().
+### For a local array, chunks are read one at a time (see
+### .read_zarr_1d_by_chunk() below), with Rarr's internal chunk decoder or,
+### if that fails (e.g. Rarr's internals changed), with one public
+### Rarr::read_zarr_array() call per chunk. For a remote array, or if both
+### fail, this falls back to a single Rarr::read_zarr_array() call.
 .read_zarr_1d <- function(path, idx=NULL)
 {
     if (!is.null(.zarr_int64_info(path)))
@@ -77,6 +78,11 @@
     if (!grepl("^[a-z]+://", path)) {
         ans <- tryCatch(.read_zarr_1d_by_chunk(path, idx),
                         error=function(e) NULL)
+        if (is.null(ans))
+            ans <- tryCatch(
+                .read_zarr_1d_by_chunk(path, idx,
+                                       reader=.public_chunk_reader(path)),
+                error=function(e) NULL)
         if (!is.null(ans))
             return(ans)
     }
@@ -171,16 +177,54 @@
     hi * 2^32 + lo
 }
 
+### Reading 1D arrays chunk by chunk
+###
 ### Rarr::read_zarr_array() is slow for a long 'index': for each chunk, it
 ### scans the whole index to find that chunk's elements, so its cost grows
-### with (number of chunks) x length(idx). Here we sort 'idx' once, find each
-### chunk's elements with findInterval(), and decompress each needed chunk
-### once with Rarr's read_chunk(). On a 1.2 billion element AnnData store,
+### with (number of chunks) x length(idx). .read_zarr_1d_by_chunk() instead
+### sorts 'idx' once, finds each chunk's elements with findInterval(), and
+### decodes each needed chunk once. On a 1.2 billion element AnnData store,
 ### reading 43M elements went from 5 s to 0.7 s, and 240M from 86 s to 4 s.
-.read_zarr_1d_by_chunk <- function(path, idx=NULL)
+###
+### Chunks are decoded by a "chunk reader": a list with the array length 'n',
+### the chunk length 'chunk', the R type of the values 'type', and a function
+### 'read(cid)' that returns the values of chunk 'cid' (0-based). The fastest
+### readers use Rarr's internal chunk decoder, whose interface differs
+### between Rarr versions, so there is one per version. The public reader,
+### which works with any version, is the fallback.
+
+### Get an internal Rarr function. Using get() rather than ':::' keeps R CMD
+### check from flagging the functions missing in the installed Rarr version.
+.rarr_internal <- function(name) get(name, envir=asNamespace("Rarr"))
+
+.r_type_of_zarr_base_type <- function(base_type)
 {
-    path <- paste0(sub("/+$", "", normalizePath(path, mustWork=TRUE)), "/")
-    meta <- Rarr:::.read_array_metadata(path, ".zarray", s3_client=NULL)
+    switch(base_type, bool="logical", int="integer", uint="integer",
+           float="double", stop("unsupported data type"))
+}
+
+### The chunk reader for the installed version of Rarr, chosen from the
+### arguments of its internal read_chunk(). 'path' ends with "/".
+.rarr_chunk_reader <- function(path)
+{
+    read_chunk <- .rarr_internal("read_chunk")
+    args <- names(formals(read_chunk))
+    if ("zarr_array_path" %in% args) {
+        .rarr1_chunk_reader(path, read_chunk)
+    } else if ("chunk_path" %in% args) {
+        .rarr2_0_chunk_reader(path, read_chunk)
+    } else if ("chunk_bytes" %in% args) {
+        .rarr2_1_chunk_reader(path, read_chunk)
+    } else {
+        stop("unknown Rarr version")
+    }
+}
+
+### Rarr 1.x: Zarr v2 only. read_chunk() reads and decodes a chunk file.
+.rarr1_chunk_reader <- function(path, read_chunk)
+{
+    meta <- .rarr_internal(".read_array_metadata")(path, ".zarray",
+                                                   s3_client=NULL)
     if (length(meta$shape) != 1L)
         stop("not a 1D array")
     n <- as.numeric(meta$shape[[1L]])
@@ -188,14 +232,124 @@
     ## For a C-order array, read_chunk() calls aperm() on each chunk, which
     ## copies it. C and Fortran order are the same in 1D, so skip that.
     meta$order <- "F"
+    read <- function(cid) {
+        ## zarr-python always writes full-size chunks, but Rarr's writer
+        ## makes the last one shorter: 'alt_chunk_dim' accepts both.
+        read_chunk(path, chunk_id=cid, metadata=meta,
+                   alt_chunk_dim=min(chunk, n - cid * chunk))$chunk_data
+    }
+    list(n=n, chunk=chunk,
+         type=.r_type_of_zarr_base_type(meta$datatype$base_type), read=read)
+}
+
+### Metadata of a Zarr v2 or v3 array in Rarr 2.x, with its decoders.
+.rarr2_metadata <- function(path, metadata_file=NULL)
+{
+    read_meta <- .rarr_internal(".read_array_metadata")
+    if ("metadata_file" %in% names(formals(read_meta))) {
+        file <- if (file.exists(paste0(path, "zarr.json"))) "zarr.json"
+                else ".zarray"
+        meta <- read_meta(path, file, s3_client=NULL)
+    } else {
+        meta <- read_meta(path, s3_client=NULL)
+    }
+    if (length(meta$shape) != 1L)
+        stop("not a 1D array")
+    meta$configured_decoders <-
+        .rarr_internal(".configure_codecs")(meta$codecs, operation="decode")
+    meta
+}
+
+### File of chunk 'cid', e.g. "<path>0" (Zarr v2) or "<path>c/0" (Zarr v3).
+.rarr2_chunk_file <- function(path, meta, cid)
+{
+    key <- matrix(as.integer(cid), ncol=1L)
+    paste0(path, .rarr_internal(".create_chunk_names")(as.data.frame(key),
+                                                        meta))
+}
+
+### Rarr 2.0: read_chunk() reads and decodes a chunk file.
+.rarr2_0_chunk_reader <- function(path, read_chunk)
+{
+    meta <- .rarr2_metadata(path)
+    n <- as.numeric(meta$shape[[1L]])
+    chunk <- as.numeric(meta$chunk_grid$configuration$chunk_shape[[1L]])
+    read <- function(cid) {
+        len <- min(chunk, n - cid * chunk)
+        f <- .rarr2_chunk_file(path, meta, cid)
+        if (!file.exists(f))
+            return(rep(meta$fill_value, len))
+        read_chunk(f, metadata=meta, alt_chunk_dim=len)
+    }
+    list(n=n, chunk=chunk,
+         type=.r_type_of_zarr_base_type(meta$datatype$base_type), read=read)
+}
+
+### Rarr 2.1: read_chunk() decodes the bytes of a chunk.
+.rarr2_1_chunk_reader <- function(path, read_chunk)
+{
+    meta <- .rarr2_metadata(path)
+    n <- as.numeric(meta$shape[[1L]])
+    chunk <- as.numeric(meta$chunk_grid$configuration$chunk_shape[[1L]])
+    decode <- function(bytes, dim)
+        read_chunk(chunk_bytes=bytes, chunk_dim=dim,
+                   decoders=meta$configured_decoders,
+                   datatype=meta$datatype, fill_value=meta$fill_value)
+    read <- function(cid) {
+        len <- min(chunk, n - cid * chunk)
+        f <- .rarr2_chunk_file(path, meta, cid)
+        if (!file.exists(f))
+            return(rep(meta$fill_value, len))
+        bytes <- readBin(f, "raw", n=file.size(f))
+        ## Full-size chunk as written by zarr-python, or a short last chunk
+        ## as written by Rarr 1.x.
+        tryCatch(decode(bytes, chunk), error=function(e) decode(bytes, len))
+    }
+    list(n=n, chunk=chunk,
+         type=.r_type_of_zarr_base_type(meta$datatype$base_type), read=read)
+}
+
+### Any Rarr version: one Rarr::read_zarr_array() call per chunk, which is
+### fast because each index is short. Zarr metadata is read with jsonlite.
+.public_chunk_reader <- function(path)
+{
+    meta <- .read_zarr_json(path, ".zarray")
+    if (!is.null(meta)) {
+        chunk <- meta$chunks
+        base <- sub("^[<>|=]?([biuf]).*$", "\\1", meta$dtype)
+    } else {
+        meta <- .read_zarr_json(path, "zarr.json")
+        chunk <- meta$chunk_grid$configuration$chunk_shape
+        base <- substr(meta$data_type, 1L, 1L)
+    }
+    if (length(meta$shape) != 1L)
+        stop("not a 1D array")
+    n <- as.numeric(meta$shape)
+    chunk <- as.numeric(chunk)
+    type <- switch(base, b="logical", i="integer", u="integer", f="double",
+                   stop("unsupported data type"))
+    read <- function(cid) {
+        from <- cid * chunk + 1
+        to <- min((cid + 1) * chunk, n)
+        as.vector(read_zarr_array(path, index=list(from:to)))
+    }
+    list(n=n, chunk=chunk, type=type, read=read)
+}
+
+### Read elements 'idx' (1-based, any order, duplicates allowed) of a local
+### 1D Zarr array with 'reader', which defaults to the fastest one for the
+### installed Rarr.
+.read_zarr_1d_by_chunk <- function(path, idx=NULL, reader=NULL)
+{
+    path <- paste0(sub("/+$", "", normalizePath(path, mustWork=TRUE)), "/")
+    if (is.null(reader))
+        reader <- .rarr_chunk_reader(path)
+    n <- reader$n
+    chunk <- reader$chunk
 
     ## Empty selection: no need to read anything, just get the type right.
-    if (!is.null(idx) && length(idx) == 0L) {
-        return(switch(meta$datatype$base_type,
-                      bool=logical(0), int=integer(0), uint=integer(0),
-                      float=double(0),
-                      stop("unsupported data type")))
-    }
+    if (!is.null(idx) && length(idx) == 0L)
+        return(vector(reader$type, 0L))
 
     if (is.null(idx)) {
         idx <- seq_len(n)
@@ -226,12 +380,7 @@
         if (hi < lo)
             next
         cid <- first + k - 1
-        ## zarr-python always writes full-size chunks, but Rarr's writer
-        ## makes the last one shorter: 'alt_chunk_dim' accepts both.
-        chunk_data <- Rarr:::read_chunk(path, chunk_id=cid, metadata=meta,
-                                        alt_chunk_dim=min(chunk, n - cid * chunk)
-                      )$chunk_data
-        chunk_data <- as.vector(chunk_data)
+        chunk_data <- as.vector(reader$read(cid))
         ## Whole chunk selected: no need to subset it.
         if (strict && hi - lo + 1 == length(chunk_data)) {
             pieces[[k]] <- chunk_data

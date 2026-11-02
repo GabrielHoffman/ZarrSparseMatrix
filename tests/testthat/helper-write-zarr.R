@@ -1,11 +1,23 @@
+### Rarr::write_zarr_array(), writing Zarr v2 (Rarr 2.1 writes v3 by
+### default). Rarr 1.x only writes v2 and has no 'zarr_version' argument.
+### Pass zarr_version=3L to write v3 with Rarr 2.x.
+rarr_write <- function(..., zarr_version=2L)
+{
+    if ("zarr_version" %in% names(formals(Rarr::write_zarr_array))) {
+        Rarr::write_zarr_array(..., zarr_version=zarr_version)
+    } else {
+        stopifnot(zarr_version == 2L)
+        Rarr::write_zarr_array(...)
+    }
+}
+
 ### Write a 1D Zarr array the way zarr-python does, i.e. with the last chunk
 ### padded to full size. Rarr::write_zarr_array() writes a short last chunk,
 ### which Rarr::read_zarr_array() then fails to read with an 'index'.
 write_1d_zarr <- function(v, path, chunk)
 {
     pad <- (-length(v)) %% chunk
-    Rarr::write_zarr_array(array(c(v, rep(v[1L], pad))), path,
-                           chunk_dim=chunk)
+    rarr_write(array(c(v, rep(v[1L], pad))), path, chunk_dim=chunk)
     f <- file.path(path, ".zarray")
     meta <- jsonlite::read_json(f)
     meta$shape <- list(length(v))

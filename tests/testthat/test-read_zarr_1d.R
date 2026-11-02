@@ -41,10 +41,29 @@ test_that("empty selections have the right type without reading data", {
 test_that("Rarr's short last chunk is handled", {
     ## write_zarr_array() writes the last chunk shorter than the others.
     short_path <- file.path(dir, "short")
-    Rarr::write_zarr_array(array(int), short_path, chunk_dim=10L)
+    rarr_write(array(int), short_path, chunk_dim=10L)
     expect_identical(read_1d(short_path, c(2L, 101L, 103L)),
                      int[c(2L, 101L, 103L)])
     expect_identical(read_1d(short_path), int)
+})
+
+test_that("every chunk reader gives the same values", {
+    i <- c(50L, 3L, 103L, 3L, 12L, 50L, 11L)
+    expect_identical(read_by_chunk(dbl_path, i,
+        reader=ZarrSparseMatrix:::.public_chunk_reader(dbl_path)), dbl[i])
+    expect_identical(read_by_chunk(int_path, i,
+        reader=ZarrSparseMatrix:::.public_chunk_reader(int_path)), int[i])
+    expect_identical(read_by_chunk(int_path, integer(0),
+        reader=ZarrSparseMatrix:::.public_chunk_reader(int_path)), integer(0))
+})
+
+test_that("Zarr v3 arrays are read (Rarr 2.x only)", {
+    skip_if_not("zarr_version" %in% names(formals(Rarr::write_zarr_array)))
+    v3_path <- file.path(dir, "v3")
+    rarr_write(array(dbl), v3_path, chunk_dim=10L, zarr_version=3L)
+    i <- c(103L, 1L, 55L, 55L)
+    expect_identical(read_by_chunk(v3_path, i), dbl[i])
+    expect_identical(read_1d(v3_path), dbl)
 })
 
 test_that("out-of-range indices are rejected", {
