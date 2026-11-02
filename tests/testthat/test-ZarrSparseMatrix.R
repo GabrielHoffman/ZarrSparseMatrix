@@ -59,3 +59,31 @@ test_that("bad input is rejected", {
     expect_error(ZarrSparseMatrix(store, "Y"))
     expect_error(ZarrSparseMatrix(store, "X", dim=c(5L, 5L)), "indptr")
 })
+
+test_that("row and column selections match the in-memory matrix", {
+    set.seed(3)
+    for (layout in c("csr", "csc")) {
+        store <- file.path(tempfile(), paste0(layout, ".zarr"))
+        write_sparse_zarr(store, M, layout)
+        X <- ZarrSparseMatrix(store, "X")
+        seed <- DelayedArray::seed(X)
+        idx_list <- list(
+            list(c(30L, 1L, 15L), NULL),           # unsorted rows
+            list(c(4L, 4L, 9L, 4L), c(2L, 2L)),    # duplicated rows and cols
+            list(integer(0), 1:5),                 # no rows
+            list(1:5, integer(0)),                 # no columns
+            list(NULL, c(20L, 1L)),                # all rows
+            list(sample(30L, 12L), sample(20L, 7L)))
+        for (index in idx_list) {
+            i <- if (is.null(index[[1L]])) seq_len(nrow(D)) else index[[1L]]
+            j <- if (is.null(index[[2L]])) seq_len(ncol(D)) else index[[2L]]
+            a <- extract_array(seed, index)
+            expect_equal(a, D[i, j, drop=FALSE], ignore_attr=TRUE)
+            sa <- extract_sparse_array(seed, index)
+            expect_identical(typeof(a), type(sa))
+            expect_identical(dim(sa), c(length(i), length(j)))
+            expect_equal(as.matrix(sa), D[i, j, drop=FALSE],
+                         ignore_attr=TRUE)
+        }
+    }
+})

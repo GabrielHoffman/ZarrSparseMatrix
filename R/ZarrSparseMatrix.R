@@ -65,8 +65,19 @@
 
 ### Read elements 'idx' (1-based) of a 1D Zarr array. Reads the whole array
 ### if 'idx' is NULL.
+###
+### For a local Zarr v2 array, chunks are read one at a time with Rarr's
+### internal read_chunk() (see .read_zarr_1d_by_chunk() below). For anything
+### else, or if that fails (e.g. Rarr's internals changed), this falls back
+### to Rarr::read_zarr_array().
 .read_zarr_1d <- function(path, idx=NULL)
 {
+    if (!grepl("^[a-z]+://", path)) {
+        ans <- tryCatch(.read_zarr_1d_by_chunk(path, idx),
+                        error=function(e) NULL)
+        if (!is.null(ans))
+            return(ans)
+    }
     if (is.null(idx))
         return(as.vector(read_zarr_array(path)))
     if (length(idx) == 0L) {
@@ -74,6 +85,81 @@
         return(as.vector(read_zarr_array(path, index=list(1L)))[0L])
     }
     as.vector(read_zarr_array(path, index=list(idx)))
+}
+
+### Rarr::read_zarr_array() is slow for a long 'index': for each chunk, it
+### scans the whole index to find that chunk's elements, so its cost grows
+### with (number of chunks) x length(idx). Here we sort 'idx' once, find each
+### chunk's elements with findInterval(), and decompress each needed chunk
+### once with Rarr's read_chunk(). On a 1.2 billion element AnnData store,
+### reading 43M elements went from 5 s to 0.7 s, and 240M from 86 s to 4 s.
+.read_zarr_1d_by_chunk <- function(path, idx=NULL)
+{
+    path <- paste0(sub("/+$", "", normalizePath(path, mustWork=TRUE)), "/")
+    meta <- Rarr:::.read_array_metadata(path, ".zarray", s3_client=NULL)
+    if (length(meta$shape) != 1L)
+        stop("not a 1D array")
+    n <- as.numeric(meta$shape[[1L]])
+    chunk <- as.numeric(meta$chunks[[1L]])
+    ## For a C-order array, read_chunk() calls aperm() on each chunk, which
+    ## copies it. C and Fortran order are the same in 1D, so skip that.
+    meta$order <- "F"
+
+    ## Empty selection: no need to read anything, just get the type right.
+    if (!is.null(idx) && length(idx) == 0L) {
+        return(switch(meta$datatype$base_type,
+                      bool=logical(0), int=integer(0), uint=integer(0),
+                      float=double(0),
+                      stop("unsupported data type")))
+    }
+
+    if (is.null(idx)) {
+        idx <- seq_len(n)
+        perm <- NULL
+    } else {
+        idx <- as.numeric(idx)
+        if (anyNA(idx) || min(idx) < 1 || max(idx) > n)
+            stop("subscript out of bounds")
+        perm <- NULL
+        if (is.unsorted(idx)) {
+            perm <- order(idx)
+            idx <- idx[perm]
+        }
+    }
+
+    ## With no duplicates, a chunk is fully selected when the number of
+    ## selected elements equals its length.
+    strict <- isStrictlySorted(idx)
+    first <- (idx[[1L]] - 1) %/% chunk
+    last <- (idx[[length(idx)]] - 1) %/% chunk
+    ## bounds[k] is the position in 'idx' of the first element in chunk
+    ## (first + k - 1); bounds[k + 1] - 1 is the position of its last.
+    bounds <- findInterval(seq(first, last + 1) * chunk, idx) + 1L
+    pieces <- vector("list", last - first + 1)
+    for (k in seq_along(pieces)) {
+        lo <- bounds[[k]]
+        hi <- bounds[[k + 1L]] - 1L
+        if (hi < lo)
+            next
+        cid <- first + k - 1
+        ## zarr-python always writes full-size chunks, but Rarr's writer
+        ## makes the last one shorter: 'alt_chunk_dim' accepts both.
+        chunk_data <- Rarr:::read_chunk(path, chunk_id=cid, metadata=meta,
+                                        alt_chunk_dim=min(chunk, n - cid * chunk)
+                      )$chunk_data
+        chunk_data <- as.vector(chunk_data)
+        ## Whole chunk selected: no need to subset it.
+        if (strict && hi - lo + 1 == length(chunk_data)) {
+            pieces[[k]] <- chunk_data
+        } else {
+            pieces[[k]] <- chunk_data[idx[lo:hi] - cid * chunk]
+        }
+    }
+    ans <- unlist(pieces, use.names=FALSE)
+
+    if (!is.null(perm))
+        ans[perm] <- ans
+    ans
 }
 
 
@@ -353,9 +439,11 @@ if (!(is.character(filepath) && length(filepath) == 1L && !is.na(filepath)))
 ### Data extraction
 ###
 
-### Load the columns 'j' (sorted, unique, or NULL for all) of a CSC seed
-### as a COO_SparseArray of dimensions nrow(x) x length(j).
-.load_CSC_ZarrSparseMatrixSeed <- function(x, j=NULL)
+### Load the columns 'j' (sorted, unique, or NULL for all) and the rows 'i'
+### (unique, any order, or NULL for all) of a CSC seed as triplets: a list
+### with the dimensions length(i) x length(j), and the row, column and value
+### of each nonzero.
+.load_CSC_triplets <- function(x, i=NULL, j=NULL)
 {
   ranges <- x@indptr_ranges
   if (!is.null(j))
@@ -374,28 +462,110 @@ if (!(is.character(filepath) && length(filepath) == 1L && !is.na(filepath)))
   row_idx <- as.integer(.read_zarr_1d(.indices_path(x), idx)) + 1L
   col_idx <- rep.int(seq_len(ncol), widths)
 
-  nzcoo <- cbind(row_idx, col_idx, deparse.level=0L)
-  COO_SparseArray(c(x@dim[[1L]], ncol), nzcoo, nzdata, check=FALSE)
+  nrow <- x@dim[[1L]]
+  if (!is.null(i)) {
+    ## Keep only the selected rows, before building the COO_SparseArray.
+    ## 'lookup' maps each row to its position in 'i' (0 if not selected),
+    ## which is much faster than match() on long 'row_idx'.
+    lookup <- integer(nrow)
+    lookup[i] <- seq_along(i)
+    row_idx <- lookup[row_idx]
+    keep <- row_idx != 0L
+    row_idx <- row_idx[keep]
+    col_idx <- col_idx[keep]
+    nzdata <- nzdata[keep]
+    nrow <- length(i)
+  }
+  list(dim=c(nrow, ncol), row=row_idx, col=col_idx, val=nzdata)
 }
 
-#' @importFrom S4Vectors isStrictlySorted
-.extract_sparse_array_from_CSC_ZarrSparseMatrixSeed <- function(x, index)
+### The triplets of a CSC seed as a COO_SparseArray.
+.load_CSC_ZarrSparseMatrixSeed <- function(x, i=NULL, j=NULL)
+{
+  trip <- .load_CSC_triplets(x, i=i, j=j)
+  nzcoo <- cbind(trip$row, trip$col, deparse.level=0L)
+  COO_SparseArray(trip$dim, nzcoo, trip$val, check=FALSE)
+}
+
+### The triplets of a CSC seed as an ordinary matrix, filled directly
+### instead of through a sparse object. With 'transpose=TRUE', the
+### transposed matrix is filled instead, which is how a CSR seed is read.
+.load_CSC_as_dense <- function(x, i=NULL, j=NULL, transpose=FALSE)
+{
+  trip <- .load_CSC_triplets(x, i=i, j=j)
+  zero <- vector(typeof(trip$val), 1L)
+  if (transpose) {
+    ans <- matrix(zero, trip$dim[[2L]], trip$dim[[1L]])
+    ans[cbind(trip$col, trip$row, deparse.level=0L)] <- trip$val
+  } else {
+    ans <- matrix(zero, trip$dim[[1L]], trip$dim[[2L]])
+    ans[cbind(trip$row, trip$col, deparse.level=0L)] <- trip$val
+  }
+  ans
+}
+
+### Normalize 'index' of a CSC seed for loading: the columns are sorted and
+### deduplicated and the rows deduplicated (rows are filtered while loading,
+### in any order). 'i0'/'j0' are the indices to reorder or expand the loaded
+### result with afterwards, or NULL if not needed.
+.normalize_CSC_index <- function(index)
 {
   j <- index[[2L]]
+  j0 <- NULL
   if (!is.null(j)) {
     if (!is.integer(j))
       j <- as.integer(j)
-    sort_j <- !isStrictlySorted(j)
-    if (sort_j) {
-      j0 <- j
-      j <- unique(sort(j))
+    if (!isStrictlySorted(j)) {
+      ju <- unique(sort(j))
+      j0 <- match(j, ju)
+      j <- ju
     }
   }
-  coo <- .load_CSC_ZarrSparseMatrixSeed(x, j=j)
-  index2 <- list(index[[1L]], NULL)
-  if (!is.null(j) && sort_j)
-    index2[[2L]] <- match(j0, j)
-  extract_sparse_array(coo, index2)
+  i <- index[[1L]]
+  i0 <- NULL
+  if (!is.null(i)) {
+    if (!is.integer(i))
+      i <- as.integer(i)
+    if (anyDuplicated(i) != 0L) {
+      iu <- unique(i)
+      i0 <- match(i, iu)
+      i <- iu
+    }
+  }
+  list(i=i, j=j, i0=i0, j0=j0)
+}
+
+### Dense extraction from a CSC seed, or from a CSR seed via its CSC
+### transpose 't(x)' and reversed index.
+.extract_array_from_CSC_ZarrSparseMatrixSeed <- function(x, index,
+                                                          transpose=FALSE)
+{
+  idx <- .normalize_CSC_index(index)
+  ans <- .load_CSC_as_dense(x, i=idx$i, j=idx$j, transpose=transpose)
+  if (is.null(idx$i0) && is.null(idx$j0))
+    return(ans)
+  ## Dimensions of the loaded result in CSC orientation.
+  d <- if (transpose) rev(dim(ans)) else dim(ans)
+  i0 <- idx$i0 %||% seq_len(d[[1L]])
+  j0 <- idx$j0 %||% seq_len(d[[2L]])
+  if (transpose) ans[j0, i0, drop=FALSE] else ans[i0, j0, drop=FALSE]
+}
+
+#' @importFrom S4Vectors isStrictlySorted
+#' @importFrom methods as
+#' @importClassesFrom SparseArray SVT_SparseArray
+.extract_sparse_array_from_CSC_ZarrSparseMatrixSeed <- function(x, index)
+{
+  ## Duplicated rows and columns are loaded once and expanded afterwards.
+  idx <- .normalize_CSC_index(index)
+  coo <- .load_CSC_ZarrSparseMatrixSeed(x, i=idx$i, j=idx$j)
+  index2 <- list(idx$i0, idx$j0)
+  if (is.null(index2[[1L]]) && is.null(index2[[2L]]))
+    return(coo)
+  ## Subset an SVT_SparseArray, not the COO_SparseArray: in SparseArray
+  ## 1.10.10, extract_sparse_array() on a COO_SparseArray returns zeros for
+  ## repeated columns, e.g. index2 = list(NULL, c(1L, 1L)).
+  extract_sparse_array(as(coo, "SVT_SparseArray"), index2)
 }
 
 #' @importFrom SparseArray extract_sparse_array COO_SparseArray
@@ -417,8 +587,15 @@ setMethod("extract_sparse_array", "CSR_ZarrSparseMatrixSeed",
 #' @importFrom S4Arrays extract_array
 #' @exportMethod extract_array
 #' @rdname ZarrSparseMatrixSeed
-setMethod("extract_array", "ZarrSparseMatrixSeed",
-  function(x, index) as.array(extract_sparse_array(x, index))
+setMethod("extract_array", "CSC_ZarrSparseMatrixSeed",
+  function(x, index) .extract_array_from_CSC_ZarrSparseMatrixSeed(x, index)
+)
+
+#' @rdname ZarrSparseMatrixSeed
+setMethod("extract_array", "CSR_ZarrSparseMatrixSeed",
+  function(x, index)
+    .extract_array_from_CSC_ZarrSparseMatrixSeed(t(x), rev(index),
+                                                 transpose=TRUE)
 )
 
 ### Chunk geometry: a CSC matrix is best read by column, a CSR by row.

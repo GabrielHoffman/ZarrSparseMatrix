@@ -16,7 +16,8 @@
 \alias{ZarrSparseMatrixSeed}
 \alias{extract_sparse_array,CSC_ZarrSparseMatrixSeed-method}
 \alias{extract_sparse_array,CSR_ZarrSparseMatrixSeed-method}
-\alias{extract_array,ZarrSparseMatrixSeed-method}
+\alias{extract_array,CSC_ZarrSparseMatrixSeed-method}
+\alias{extract_array,CSR_ZarrSparseMatrixSeed-method}
 \alias{chunkdim,CSC_ZarrSparseMatrixSeed-method}
 \alias{chunkdim,CSR_ZarrSparseMatrixSeed-method}
 \title{ZarrSparseMatrixSeed objects}
@@ -50,7 +51,9 @@ ZarrSparseMatrixSeed(
 
 \S4method{extract_sparse_array}{CSR_ZarrSparseMatrixSeed}(x, index)
 
-\S4method{extract_array}{ZarrSparseMatrixSeed}(x, index)
+\S4method{extract_array}{CSC_ZarrSparseMatrixSeed}(x, index)
+
+\S4method{extract_array}{CSR_ZarrSparseMatrixSeed}(x, index)
 
 \S4method{chunkdim}{CSC_ZarrSparseMatrixSeed}(x)
 
