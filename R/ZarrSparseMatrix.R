@@ -676,6 +676,15 @@ if (!(is.character(filepath) && length(filepath) == 1L && !is.na(filepath)))
 ### (unique, any order, or NULL for all) of a CSC seed as triplets: a list
 ### with the dimensions length(i) x length(j), and the row, column and value
 ### of each nonzero.
+### The positions start[k], ..., start[k] + width[k] - 1 for each k, as
+### doubles. sequence(width, from=start) would do the same, but it coerces
+### 'start' to integer, which gives NA for positions beyond 2^31 - 1 (in
+### matrices with more nonzero values than that).
+.ranges_to_positions <- function(start, width)
+{
+  rep.int(start - 1, width) + sequence(width)
+}
+
 .load_CSC_triplets <- function(x, i=NULL, j=NULL)
 {
   ranges <- x@indptr_ranges
@@ -689,7 +698,7 @@ if (!(is.character(filepath) && length(filepath) == 1L && !is.na(filepath)))
     idx <- NULL
   } else {
     ## Positions (1-based) in data/indices of the selected columns.
-    idx <- sequence(widths, from=ranges$start)
+    idx <- .ranges_to_positions(ranges$start, widths)
   }
   nzdata <- .read_zarr_1d(.data_path(x), idx)
   row_idx <- as.integer(.read_zarr_1d(.indices_path(x), idx)) + 1L
