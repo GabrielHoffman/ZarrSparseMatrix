@@ -72,6 +72,8 @@
 ### to Rarr::read_zarr_array().
 .read_zarr_1d <- function(path, idx=NULL)
 {
+    if (!is.null(.zarr_int64_info(path)))
+        return(.read_zarr_int64_1d(path, idx))
     if (!grepl("^[a-z]+://", path)) {
         ans <- tryCatch(.read_zarr_1d_by_chunk(path, idx),
                         error=function(e) NULL)
@@ -85,6 +87,88 @@
         return(as.vector(read_zarr_array(path, index=list(1L)))[0L])
     }
     as.vector(read_zarr_array(path, index=list(idx)))
+}
+
+### 64-bit integer arrays
+###
+### AnnData writes "indptr" as int64 when the matrix has more than 2^31 - 1
+### nonzero values. Rarr converts 64-bit integers to R integers, which turns
+### values above .Machine$integer.max into NA. To read them exactly (up to
+### 2^53, as doubles), we let Rarr read the array as float64, which gives
+### each value's 8 bytes unchanged, and then convert those bytes back.
+
+### NULL if the Zarr array at 'path' isn't a local 64-bit integer array.
+### Otherwise a list with the metadata file name and whether the type is
+### signed.
+.zarr_int64_info <- function(path)
+{
+    if (grepl("^[a-z]+://", path))
+        return(NULL)
+    meta <- .read_zarr_json(path, ".zarray")
+    if (!is.null(meta)) {
+        m <- regmatches(meta$dtype, regexec("^[<>|=]?([iu])8$", meta$dtype))
+        if (length(m[[1L]]) == 0L)
+            return(NULL)
+        return(list(file=".zarray", signed=m[[1L]][[2L]] == "i"))
+    }
+    meta <- .read_zarr_json(path, "zarr.json")
+    if (!is.null(meta) && identical(meta$node_type, "array") &&
+        meta$data_type %in% c("int64", "uint64"))
+        return(list(file="zarr.json", signed=meta$data_type == "int64"))
+    NULL
+}
+
+.read_zarr_int64_1d <- function(path, idx=NULL)
+{
+    info <- .zarr_int64_info(path)
+    path <- sub("/+$", "", normalizePath(path, mustWork=TRUE))
+
+    ## A copy of the array that declares float64 instead of (u)int64: edited
+    ## metadata, and symlinks to the original chunks (copies if symlinks
+    ## aren't supported). The JSON is edited as text so that nothing else
+    ## in it changes.
+    tmp <- tempfile("zarr_int64_")
+    dir.create(tmp)
+    on.exit(unlink(tmp, recursive=TRUE))
+    json <- readLines(file.path(path, info$file), warn=FALSE)
+    if (info$file == ".zarray") {
+        json <- sub('("dtype"\\s*:\\s*"[<>|=]?)[iu]8"', '\\1f8"', json)
+    } else {
+        json <- sub('("data_type"\\s*:\\s*")u?int64"', '\\1float64"', json)
+    }
+    writeLines(json, file.path(tmp, info$file))
+    entries <- setdiff(list.files(path, all.files=TRUE, no..=TRUE), info$file)
+    from <- file.path(path, entries)
+    to <- file.path(tmp, entries)
+    linked <- suppressWarnings(file.symlink(from, to))
+    if (!all(linked))
+        file.copy(from[!linked], tmp, recursive=TRUE)
+
+    x <- .read_zarr_1d(tmp, idx)
+
+    ## Split each value's 8 bytes into its low and high 32-bit words, read
+    ## as signed integers. Fix up the words that are negative or NA (R's NA
+    ## integer is the bit pattern 0x80000000, i.e. -2^31).
+    words <- readBin(writeBin(x, raw(), size=8L, endian="little"), "integer",
+                     n=2L * length(x), size=4L, endian="little")
+    unsigned <- function(w) {
+        w <- as.numeric(w)
+        w[is.na(w)] <- 2^31
+        w[w < 0] <- w[w < 0] + 2^32
+        w
+    }
+    lo <- unsigned(words[seq.int(1L, by=2L, length.out=length(x))])
+    hi <- words[seq.int(2L, by=2L, length.out=length(x))]
+    if (info$signed) {
+        hi <- as.numeric(hi)
+        hi[is.na(hi)] <- -2^31
+    } else {
+        hi <- unsigned(hi)
+    }
+    if (any(hi >= 2^21 | hi < -2^21))
+        stop(wmsg("64-bit integer array \"", path, "\" has values that ",
+                  "can't be represented exactly as doubles (beyond 2^53)"))
+    hi * 2^32 + lo
 }
 
 ### Rarr::read_zarr_array() is slow for a long 'index': for each chunk, it
