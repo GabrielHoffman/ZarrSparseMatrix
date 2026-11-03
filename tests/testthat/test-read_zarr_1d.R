@@ -70,3 +70,32 @@ test_that("out-of-range indices are rejected", {
     expect_error(read_by_chunk(dbl_path, 104L))
     expect_error(read_by_chunk(dbl_path, 0L))
 })
+
+test_that("reading ranges matches reading their positions", {
+    read_ranges <- ZarrSparseMatrix:::.read_zarr_1d_ranges
+    positions <- ZarrSparseMatrix:::.ranges_to_positions
+    cases <- list(
+        list(start=1, width=103),                  # whole array
+        list(start=c(3, 8, 15), width=c(5, 7, 2)), # adjacent: one run
+        list(start=c(2, 25, 61), width=c(3, 30, 1)),  # across chunks
+        list(start=c(11, 31), width=c(10, 10)),    # whole chunks
+        list(start=c(5, 9, 9, 40), width=c(4, 0, 3, 64)),  # empty range
+        list(start=c(1, 50), width=c(0, 0)),       # nothing selected
+        list(start=c(20, 5), width=c(3, 3)),       # unsorted
+        list(start=c(5, 6), width=c(4, 4))         # overlapping
+    )
+    for (r in cases) {
+        idx <- positions(r$start, r$width)
+        expect_identical(read_ranges(dbl_path, r$start, r$width), dbl[idx])
+        expect_identical(read_ranges(int_path, r$start, r$width), int[idx])
+    }
+    short_path <- file.path(dir, "short_ranges")
+    rarr_write(array(int), short_path, chunk_dim=10L)
+    expect_identical(read_ranges(short_path, c(95, 101), c(4, 3)),
+                     int[c(95:98, 101:103)])
+    runs <- ZarrSparseMatrix:::.read_zarr_1d_runs_by_chunk
+    expect_identical(runs(int_path, c(3, 45), c(12, 101),
+        reader=ZarrSparseMatrix:::.public_chunk_reader(int_path)),
+        int[c(3:12, 45:101)])
+    expect_error(runs(int_path, 100, 104))
+})

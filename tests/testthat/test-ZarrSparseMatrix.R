@@ -109,3 +109,53 @@ test_that("t() transposes the seed instead of delaying the transpose", {
         expect_equal(as.matrix(Y), t(D[1:4, ]), ignore_attr=TRUE)
     }
 })
+
+test_that("consecutive selections with empty rows and columns are read", {
+    E <- M
+    E[, c(1L, 2L, 7L, 20L)] <- 0
+    E[c(1L, 5L, 30L), ] <- 0
+    E <- Matrix::drop0(E)
+    DE <- as.matrix(E)
+    for (layout in c("csr", "csc")) {
+        store <- file.path(tempfile(), paste0(layout, ".zarr"))
+        write_sparse_zarr(store, E, layout)
+        X <- ZarrSparseMatrix(store, "X")
+        for (index in list(list(3:20, 1:8), list(c(30L, 2L, 5L), 6:20),
+                           list(1:30, 2:2), list(NULL, 1:20),
+                           list(10:12, NULL), list(c(1L, 5L), 1:20))) {
+            i <- index[[1L]] %||% seq_len(nrow(DE))
+            j <- index[[2L]] %||% seq_len(ncol(DE))
+            a <- extract_array(DelayedArray::seed(X), index)
+            expect_equal(a, DE[i, j, drop=FALSE], ignore_attr=TRUE)
+            sa <- extract_sparse_array(DelayedArray::seed(X), index)
+            expect_equal(as.matrix(sa), DE[i, j, drop=FALSE],
+                         ignore_attr=TRUE)
+        }
+        expect_equal(as.matrix(t(X)[3:15, 2:25]), t(DE)[3:15, 2:25],
+                     ignore_attr=TRUE)
+    }
+})
+
+test_that("rows are filtered chunk by chunk", {
+    by_chunk <- ZarrSparseMatrix:::.load_CSC_rows_by_chunk
+    E <- M
+    E[, c(1L, 2L, 7L, 20L)] <- 0
+    E <- Matrix::drop0(E)
+    DE <- as.matrix(E)
+    store <- file.path(tempfile(), "csc.zarr")
+    write_sparse_zarr(store, E, "csc")
+    x <- DelayedArray::seed(ZarrSparseMatrix(store, "X"))
+    for (index in list(list(c(30L, 2L, 5L), 1:20), list(3:20, c(1L, 4:9)),
+                       list(1:30, 2L), list(4L, integer(0)))) {
+        i <- index[[1L]]
+        j <- index[[2L]]
+        lookup <- integer(nrow(DE))
+        lookup[i] <- seq_along(i)
+        trip <- by_chunk(x, x@indptr_ranges[j, , drop=FALSE], lookup)
+        expect_false(is.null(trip))
+        A <- matrix(0, length(i), length(j))
+        A[cbind(trip$row, trip$col)] <- trip$val
+        expect_equal(A, DE[i, j, drop=FALSE], ignore_attr=TRUE)
+        expect_identical(length(trip$row), sum(DE[i, j] != 0))
+    }
+})

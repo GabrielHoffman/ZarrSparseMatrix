@@ -95,6 +95,38 @@
     as.vector(read_zarr_array(path, index=list(idx)))
 }
 
+### Read the elements in ranges start[k], ..., start[k] + width[k] - 1 (1-based)
+### of a 1D Zarr array, in order. Same as
+### .read_zarr_1d(path, .ranges_to_positions(start, width)), but without
+### building that vector of positions when the ranges are sorted and
+### disjoint, as for sorted columns of a CSC matrix. Adjacent ranges (e.g.
+### consecutive columns) are merged into one run, and each run is read as
+### whole chunks, trimmed at its ends.
+.read_zarr_1d_ranges <- function(path, start, width)
+{
+    nonempty <- width > 0
+    start <- start[nonempty]
+    end <- start + width[nonempty] - 1
+    disjoint <- length(start) <= 1L ||
+                all(start[-1L] > end[-length(end)])
+    if (disjoint && is.null(.zarr_int64_info(path)) &&
+        !grepl("^[a-z]+://", path)) {
+        runs <- .merge_runs(start, end)
+        start <- runs$start
+        end <- runs$end
+        ans <- tryCatch(.read_zarr_1d_runs_by_chunk(path, start, end),
+                        error=function(e) NULL)
+        if (is.null(ans))
+            ans <- tryCatch(
+                .read_zarr_1d_runs_by_chunk(path, start, end,
+                                            reader=.public_chunk_reader(path)),
+                error=function(e) NULL)
+        if (!is.null(ans))
+            return(ans)
+    }
+    .read_zarr_1d(path, .ranges_to_positions(start, end - start + 1))
+}
+
 ### 64-bit integer arrays
 ###
 ### AnnData writes "indptr" as int64 when the matrix has more than 2^31 - 1
@@ -298,9 +330,10 @@
     read <- function(cid) {
         len <- min(chunk, n - cid * chunk)
         f <- .rarr2_chunk_file(path, meta, cid)
-        if (!file.exists(f))
+        size <- file.size(f)  # NA if missing
+        if (is.na(size))
             return(rep(meta$fill_value, len))
-        bytes <- readBin(f, "raw", n=file.size(f))
+        bytes <- readBin(f, "raw", n=size)
         ## Full-size chunk as written by zarr-python, or a short last chunk
         ## as written by Rarr 1.x.
         tryCatch(decode(bytes, chunk), error=function(e) decode(bytes, len))
@@ -400,6 +433,85 @@
     if (!is.null(perm))
         ans[perm] <- ans
     ans
+}
+
+### Merge ranges start[k]..end[k] (sorted and disjoint) that start right
+### after the previous one ends, e.g. consecutive columns of a CSC matrix.
+.merge_runs <- function(start, end)
+{
+    if (length(start) <= 1L)
+        return(list(start=start, end=end))
+    brk <- c(TRUE, start[-1L] != end[-length(end)] + 1)
+    list(start=start[brk], end=end[c(brk[-1L], TRUE)])
+}
+
+### Call FUN(values, from, to, offset) on each chunk that overlaps the runs
+### start[k]..end[k] (1-based, nonempty, sorted and disjoint) of local 1D
+### Zarr arrays of the same length and chunking, read with 'readers' (see
+### .read_zarr_1d_by_chunk()). 'values' are the decoded values of the chunk
+### in each array, 'from'..'to' the selected positions in it (1-based, one
+### pair per run), and 'offset' the position of the chunk in the arrays.
+### Returns the results in order.
+.map_runs_by_chunk <- function(readers, start, end, FUN)
+{
+    n <- readers[[1L]]$n
+    chunk <- readers[[1L]]$chunk
+    for (reader in readers)
+        if (reader$n != n || reader$chunk != chunk)
+            stop("arrays differ in length or chunking")
+    if (length(start) == 0L)
+        return(list())
+    if (start[[1L]] < 1 || end[[length(end)]] > n)
+        stop("subscript out of bounds")
+
+    ## Split the runs at chunk boundaries into segments, each within one
+    ## chunk: chunk 'cid' (0-based, nondecreasing) and positions 'from'..'to'
+    ## in it (1-based).
+    nseg <- (end - 1) %/% chunk - (start - 1) %/% chunk + 1
+    run <- rep.int(seq_along(start), nseg)
+    cid <- (start[run] - 1) %/% chunk + sequence(nseg) - 1
+    offset <- cid * chunk
+    from <- pmax(start[run] - offset, 1)
+    to <- pmin(end[run] - offset, chunk)
+
+    ## Decode each chunk once.
+    groups <- split(seq_along(cid), cumsum(c(TRUE, diff(cid) != 0)))
+    lapply(groups, function(s) {
+        c1 <- cid[[s[[1L]]]]
+        values <- lapply(readers, function(reader) reader$read(c1))
+        FUN(values, from[s], to[s], c1 * chunk)
+    })
+}
+
+### The selected positions 'from'..'to' (see .map_runs_by_chunk()) in a
+### chunk of length 'len'. NULL if the whole chunk is selected.
+.chunk_positions <- function(from, to, len)
+{
+    if (length(from) == 1L) {
+        if (from == 1 && to >= len)
+            return(NULL)
+        return(from:to)
+    }
+    sequence(to - from + 1, from=from)
+}
+
+### Read the elements in runs start[k]..end[k] (1-based, nonempty, sorted
+### and disjoint) of a local 1D Zarr array, in order, with 'reader' as for
+### .read_zarr_1d_by_chunk().
+.read_zarr_1d_runs_by_chunk <- function(path, start, end, reader=NULL)
+{
+    path <- paste0(sub("/+$", "", normalizePath(path, mustWork=TRUE)), "/")
+    if (is.null(reader))
+        reader <- .rarr_chunk_reader(path)
+    pieces <- .map_runs_by_chunk(list(reader), start, end,
+        function(values, from, to, offset) {
+            v <- values[[1L]]
+            p <- .chunk_positions(from, to, length(v))
+            if (is.null(p)) v else v[p]
+        })
+    if (length(pieces) == 0L)
+        return(vector(reader$type, 0L))
+    unlist(pieces, use.names=FALSE)
 }
 
 
@@ -700,17 +812,6 @@ if (!(is.character(filepath) && length(filepath) == 1L && !is.na(filepath)))
   widths <- ranges$width
   ncol <- nrow(ranges)
 
-  if (is.null(j)) {
-    ## All columns: read the whole data and indices arrays.
-    idx <- NULL
-  } else {
-    ## Positions (1-based) in data/indices of the selected columns.
-    idx <- .ranges_to_positions(ranges$start, widths)
-  }
-  nzdata <- .read_zarr_1d(.data_path(x), idx)
-  row_idx <- as.integer(.read_zarr_1d(.indices_path(x), idx)) + 1L
-  col_idx <- rep.int(seq_len(ncol), widths)
-
   nrow <- x@dim[[1L]]
   if (!is.null(i)) {
     ## Keep only the selected rows, before building the COO_SparseArray.
@@ -718,14 +819,81 @@ if (!(is.character(filepath) && length(filepath) == 1L && !is.na(filepath)))
     ## which is much faster than match() on long 'row_idx'.
     lookup <- integer(nrow)
     lookup[i] <- seq_along(i)
+    dim <- c(length(i), ncol)
+    trip <- .load_CSC_rows_by_chunk(x, ranges, lookup)
+    if (!is.null(trip))
+      return(c(list(dim=dim), trip))
+  }
+
+  if (is.null(j)) {
+    ## All columns: read the whole data and indices arrays.
+    read <- function(path) .read_zarr_1d(path)
+  } else {
+    ## The ranges in data/indices of the selected columns.
+    read <- function(path) .read_zarr_1d_ranges(path, ranges$start, widths)
+  }
+  nzdata <- read(.data_path(x))
+  row_idx <- as.integer(read(.indices_path(x))) + 1L
+
+  if (is.null(i)) {
+    col_idx <- rep.int(seq_len(ncol), widths)
+  } else {
     row_idx <- lookup[row_idx]
-    keep <- row_idx != 0L
+    keep <- which(row_idx != 0L)
     row_idx <- row_idx[keep]
-    col_idx <- col_idx[keep]
     nzdata <- nzdata[keep]
+    ## The column of each kept value, from its position: column k holds
+    ## positions cumsum(widths)[k-1] + 1, ..., cumsum(widths)[k]. Cheaper
+    ## than a column for every loaded value when most rows are dropped.
+    col_idx <- findInterval(keep, cumsum(as.numeric(widths)) + 1) + 1L
     nrow <- length(i)
   }
   list(dim=c(nrow, ncol), row=row_idx, col=col_idx, val=nzdata)
+}
+
+### The row, column and value of the nonzeros in the rows that 'lookup'
+### selects (see .load_CSC_triplets()) and the columns 'ranges' (sorted) of
+### a CSC seed. 'data' and 'indices' are read together chunk by chunk, and
+### the other rows are dropped from each chunk as it is decoded, so the
+### values of the dropped rows are never all held in memory. NULL if the
+### arrays can't be read this way (remote, 64-bit or chunked differently).
+.load_CSC_rows_by_chunk <- function(x, ranges, lookup)
+{
+  paths <- c(.data_path(x), .indices_path(x))
+  if (any(grepl("^[a-z]+://", paths)) ||
+      !all(vapply(paths, function(p) is.null(.zarr_int64_info(p)), TRUE)))
+    return(NULL)
+  readers <- tryCatch(lapply(paths, function(p) {
+      .rarr_chunk_reader(paste0(normalizePath(p, mustWork=TRUE), "/"))
+    }), error=function(e) NULL)
+  if (is.null(readers))
+    return(NULL)
+
+  cols <- which(ranges$width > 0)
+  start <- ranges$start[cols]
+  runs <- .merge_runs(start, start + ranges$width[cols] - 1)
+  select <- function(v, from, to) {
+    p <- .chunk_positions(from, to, length(v))
+    if (is.null(p)) v else v[p]
+  }
+  pieces <- tryCatch(.map_runs_by_chunk(readers, runs$start, runs$end,
+      function(values, from, to, offset) {
+        row <- lookup[select(values[[2L]], from, to) + 1L]
+        keep <- which(row != 0L)
+        p <- .chunk_positions(from, to, length(values[[2L]]))
+        list(row=row[keep], val=select(values[[1L]], from, to)[keep],
+             pos=offset + (if (is.null(p)) keep else p[keep]))
+      }), error=function(e) NULL)
+  if (is.null(pieces))
+    return(NULL)
+  if (length(pieces) == 0L)
+    return(list(row=integer(0), col=integer(0),
+                val=vector(readers[[1L]]$type, 0L)))
+  get <- function(name) unlist(lapply(pieces, `[[`, name), use.names=FALSE)
+  ## The column of each kept value, from its position in data/indices:
+  ## the last nonempty selected column that starts at or before it.
+  pos <- get("pos")
+  list(row=get("row"), col=cols[findInterval(pos, start)], val=get("val"))
 }
 
 ### The triplets of a CSC seed as a COO_SparseArray.
